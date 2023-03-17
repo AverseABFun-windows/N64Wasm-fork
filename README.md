@@ -23,11 +23,11 @@ You can try it here: https://www.neilb.net/n64wasm/
 # Build Instructions
 I used WSL on Windows but any Linux environment would work as well. First Install Emscripten version 2.0.7
 - create a folder somewhere in your environment to install emscripten
-- git clone https://github.com/emscripten-core/emsdk.git
-- cd emsdk
-- ./emsdk install 2.0.7
-- ./emsdk activate 2.0.7
-- source ./emsdk_env.sh
+- `git clone https://github.com/emscripten-core/emsdk.git`
+- `cd emsdk`
+- `./emsdk install 2.0.7`
+- `./emsdk activate 2.0.7`
+- `source ./emsdk_env.sh`
 - navigate back to the code folder in the N64Wasm repo
 - run `make`
 - then copy these 2 files from the code\ folder into the dist\ folder

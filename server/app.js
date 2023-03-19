@@ -11,7 +11,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 Object.defineProperty(exports, "__esModule", { value: true });
 const express = require("express");
 const sqlite3 = require("sqlite3");
-const PASSWORD = "mypassword";
+var fs = require('fs');
+let PASSWORDS = [];
 class DBRecord {
 }
 exports.DBRecord = DBRecord;
@@ -20,7 +21,30 @@ class N64Backend {
     }
     rawBody(req, res, next) {
         //req.setEncoding('utf8');
-        if (req.url.includes('/api/SendStaveState')) {
+        if (req.url.includes('/api/SendSaveState')) {
+            req.rawBody = '';
+            let chunks = [];
+            req.on('data', function (chunk) {
+                req.rawBody += chunk;
+                chunks.push(chunk);
+            });
+            req.on('end', function () {
+                let arrayCount = 0;
+                chunks.forEach(chunk => {
+                    arrayCount += chunk.length;
+                });
+                let data = new Uint8Array(arrayCount);
+                let counter = 0;
+                chunks.forEach(chunk => {
+                    for (let i = 0; i < chunk.length; i++) {
+                        data[counter] = chunk[i];
+                        counter++;
+                    }
+                });
+                req.rawData = data;
+                next();
+            });
+        } else if (req.url.includes('/api/UploadGame')) {
             req.rawBody = '';
             let chunks = [];
             req.on('data', function (chunk) {
@@ -78,11 +102,14 @@ class N64Backend {
         this.expressApp.get('/api/GetSaveStates', function (req, res) {
             thisRef.GetSaveStates(req, res);
         });
-        this.expressApp.post('/api/SendStaveState', function (req, res) {
-            thisRef.SendStaveState(req, res);
+        this.expressApp.post('/api/SendSaveState', function (req, res) {
+            thisRef.SendSaveState(req, res);
         });
-        this.expressApp.get('/api/LoadStaveState', function (req, res) {
-            thisRef.LoadStaveState(req, res);
+        this.expressApp.get('/api/LoadSaveState', function (req, res) {
+            thisRef.LoadSaveState(req, res);
+        });
+        this.expressApp.get('/api/UploadGame', function (req, res) {
+            thisRef.UploadGame(req, res);
         });
         const port = process.env.PORT || 5500;
         this.expressApp.listen(port);
@@ -97,7 +124,8 @@ class N64Backend {
             ID INTEGER PRIMARY KEY AUTOINCREMENT,
             Name TEXT,
             Date TEXT,
-            Data BLOB
+            Data BLOB,
+            password TEXT
             )`;
             yield this.sqlRun(sql);
             //clear table
@@ -105,7 +133,7 @@ class N64Backend {
             console.log('database prepared');
         });
     }
-    //need to wrap sqlite oerations in promises because they don't support async/await
+    //need to wrap sqlite operations in promises because they don't support async/await
     sqlGetRows(sql_statement, params = {}) {
         return new Promise((resolve, reject) => {
             this.db.all(sql_statement, params, (err, rows) => { return (err) ? reject(err) : resolve(rows); });
@@ -120,23 +148,55 @@ class N64Backend {
         console.log('Get Test Function');
         res.json({ message: 'API Working' });
     }
+    UploadGame(req, res) {
+        return __awaiter(this, void 0, void 0, function* () {
+            console.log('upload game ' + req.query.name);
+            let pw = req.query.password;
+            if (!PASSWORDS.includes(pw)) {
+                res.send('Wrong Password');
+                return;
+            }
+            let nonExist = 0;
+            fs.stat('roms/' + req.query.name, function(err, stat) {
+                if (err == null) {
+                    console.log(`Game ${req.query.name} exists`);
+                } else if (err.code === 'ENOENT') {
+                    nonExist++;
+                } else {
+                    console.log('Error statting file: ', err.code);
+                }
+            });
+            fs.stat('roms/unverified/' + req.query.name, function(err, stat) {
+                if (err == null) {
+                    console.log(`Game ${req.query.name} exists`);
+                } else if (err.code === 'ENOENT') {
+                    nonExist++;
+                } else {
+                    console.log('Error statting file: ', err.code);
+                }
+            });
+            if (nonExist == 2) {
+                fs.writeFile('roms/unverified/' + req.query.name, req.rawData);
+            }
+        });
+    }
     Login(req, res) {
         let pw = req.query.password;
-        if (pw != PASSWORD) {
-            res.send('Wrong Password');
-            return;
+        if (!PASSWORDS.includes(pw)) {
+            PASSWORDS.push(pw);
+            console.log('User registered')
         }
-        // res.json({ firstname: 'Maddy', lastname: 'Barkhina' });
         res.send('Success');
+        console.log('User logged in')
     }
     GetSaveStates(req, res) {
         return __awaiter(this, void 0, void 0, function* () {
             let pw = req.query.password;
-            if (pw != PASSWORD) {
+            if (!PASSWORDS.includes(pw)) {
                 res.send('Wrong Password');
                 return;
             }
-            let results = yield this.sqlGetRows(`select ID,Name,Date from savestates`);
+            let results = yield this.sqlGetRows(`select ID,Name,Date from savestates where password=$pwd`, { $pwd: pw });
             //convert to C Sharp date
             results.forEach(result => {
                 result.Date = result.Date.replace(" ", "T");
@@ -145,15 +205,15 @@ class N64Backend {
             res.json(results);
         });
     }
-    LoadStaveState(req, res) {
+    LoadSaveState(req, res) {
         return __awaiter(this, void 0, void 0, function* () {
             console.log('load state');
             let pw = req.query.password;
-            if (pw != PASSWORD) {
+            if (!PASSWORDS.includes(pw)) {
                 res.send('Wrong Password');
                 return;
             }
-            let record = yield this.sqlGetRows(`select Data from savestates where name=$name limit 1`, { $name: req.query.name });
+            let record = yield this.sqlGetRows(`select Data from savestates where name=$name,password=$pwd limit 1`, { $name: req.query.name, $pwd: pw });
             if (record.length > 0) {
                 let result = record[0].Data;
                 res.send(result);
@@ -163,32 +223,34 @@ class N64Backend {
             }
         });
     }
-    SendStaveState(req, res) {
+    SendSaveState(req, res) {
         return __awaiter(this, void 0, void 0, function* () {
             console.log('save state');
             let pw = req.query.password;
-            if (pw != PASSWORD) {
+            if (!PASSWORDS.includes(pw)) {
                 res.send('Wrong Password');
                 return;
             }
             // console.log('length: ' + (req as any).rawBody.length);
-            let records = yield this.sqlGetRows(`select ID from savestates where name = $name`, { $name: req.query.name });
+            let records = yield this.sqlGetRows(`select ID from savestates where name = $name, password=$pwd`, { $name: req.query.name, $pwd: pw });
             if (records.length == 0) //INSERT
              {
                 yield this.sqlRun(`
             insert into savestates (Name,Date,Data)
-            values($name,datetime('now'),$data)
+            values($name,datetime('now'),$data,$pwd)
             `, {
                     $name: req.query.name,
-                    $data: req.rawData
+                    $data: req.rawData,
+                    $pwd: pw
                 });
             }
             else //UPDATE
              {
                 yield this.sqlRun(`
-            update savestates set Data=$data,Date=datetime('now') where Name=$name`, {
+            update savestates set Data=$data,Date=datetime('now') where Name=$name password=$pwd`, {
                     $name: req.query.name,
-                    $data: req.rawData
+                    $data: req.rawData,
+                    $pwd: pw
                 });
             }
             // res.json(return_content);
